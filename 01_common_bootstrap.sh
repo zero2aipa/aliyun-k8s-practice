@@ -145,36 +145,53 @@ done
 ok "全部节点 /etc/hosts 分发完成"
 
 # ---------- 分发 SSH key ----------
-step "分发公钥免密登录（安全跳过失败节点）"
+# ---------- 分发 SSH key + 用私钥远程设置 root 密码并开启 root 登录 ----------
+step "通过 key3.pem 对所有节点设置 root 密码与启用 root SSH 登录"
 
 PUBKEY_PATH="/root/.ssh/id_rsa.pub"
+PRIVATE_KEY_PATH="/root/aliyun-k8s-practice/key3.pem"   # 可调整路径
 for NODE in "${ALL_CLUSTER_IPS[@]}"; do
   if [[ "$NODE" == "$MYIP" ]]; then continue; fi
   echo "👉 正在处理节点 ${NODE} ..."
-  
-  # 测试连通性（3 秒超时）
+
+  # 测试连通性
   if ! timeout 3s bash -c "echo > /dev/tcp/${NODE}/${SSH_PORT}" 2>/dev/null; then
     warn "节点 ${NODE} SSH 端口不可达（跳过）"
     continue
   fi
 
-  # 确保目标节点 .ssh 存在
-  if timeout 8s sshpass -p "${SSH_PASS}" ssh -o StrictHostKeyChecking=no -p "${SSH_PORT}" "${SSH_USER}@${NODE}" "mkdir -p ~/.ssh && chmod 700 ~/.ssh" >/dev/null 2>&1; then
-    :
+  # 先用私钥执行 root 密码设置与 sshd 配置
+  if timeout 10s ssh -i "${PRIVATE_KEY_PATH}" -o StrictHostKeyChecking=no -p "${SSH_PORT}" "root@${NODE}" bash -s <<'EOF'
+ROOT_PASS="K8s@1234"
+SSHD_CFG="/etc/ssh/sshd_config"
+echo "root:${ROOT_PASS}" | chpasswd
+sed -ri 's/^#?PermitRootLogin.*/PermitRootLogin yes/' "$SSHD_CFG"
+sed -ri 's/^#?PasswordAuthentication.*/PasswordAuthentication yes/' "$SSHD_CFG"
+sed -ri 's/^#?ChallengeResponseAuthentication.*/ChallengeResponseAuthentication no/' "$SSHD_CFG"
+if [[ -f /etc/cloud/cloud.cfg ]]; then
+  sed -ri 's/^disable_root: .*/disable_root: 0/' /etc/cloud/cloud.cfg
+  sed -ri 's/^ssh_pwauth: .*/ssh_pwauth:   yes/' /etc/cloud/cloud.cfg
+fi
+systemctl restart sshd 2>/dev/null || systemctl restart ssh || true
+EOF
+  then
+    ok "节点 ${NODE} 已启用 root 登录并重置密码"
   else
-    warn "节点 ${NODE} SSH 建立目录失败（跳过）"
+    warn "节点 ${NODE} root SSH 配置失败（跳过）"
     continue
   fi
 
-  # 直接拷贝公钥内容（替代 ssh-copy-id）
-  if timeout 10s sshpass -p "${SSH_PASS}" scp -P "${SSH_PORT}" -o StrictHostKeyChecking=no "${PUBKEY_PATH}" "${SSH_USER}@${NODE}:/tmp/id_rsa.pub.$$" >/dev/null 2>&1; then
-    timeout 8s sshpass -p "${SSH_PASS}" ssh -o StrictHostKeyChecking=no -p "${SSH_PORT}" "${SSH_USER}@${NODE}" \
-      "cat /tmp/id_rsa.pub.$$ >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && rm -f /tmp/id_rsa.pub.$$" >/dev/null 2>&1 \
+  # 再分发公钥文件实现免密登录
+  if timeout 10s scp -i "${PRIVATE_KEY_PATH}" -P "${SSH_PORT}" -o StrictHostKeyChecking=no "${PUBKEY_PATH}" "root@${NODE}:/tmp/id_rsa.pub.$$" >/dev/null 2>&1; then
+    timeout 8s ssh -i "${PRIVATE_KEY_PATH}" -o StrictHostKeyChecking=no -p "${SSH_PORT}" "root@${NODE}" \
+      "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat /tmp/id_rsa.pub.$$ >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && rm -f /tmp/id_rsa.pub.$$" >/dev/null 2>&1 \
       && ok "免密已配置：${NODE}" \
       || warn "节点 ${NODE} 更新 authorized_keys 失败"
   else
     warn "SCP 公钥到 ${NODE} 失败（跳过）"
   fi
 done
+ok "全部节点已通过 key3.pem 完成 root 登录启用与 SSH 互信"
+
 ok "SSH 互信配置流程完成"
 
