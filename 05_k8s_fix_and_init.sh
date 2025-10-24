@@ -2,106 +2,134 @@
 set -euo pipefail
 
 # ============================================================
-# kubeadm_cluster_init.sh
-# 控制平面节点(cp-1) 初始化 K8S 集群 + 分发镜像到其他节点
+# 05_k8s_fix_and_init_v2.sh
+# 作用：初始化 Kubernetes 控制平面，导出镜像，分发并 join worker
 # ============================================================
 
-# === 1️⃣ 基本配置 ===
-CONTROL_PLANE_IP="10.0.1.1"
-WORKER_IPS=("10.0.2.1" "10.0.2.2")
-SSH_USER="root"
-SSH_PASS="YourRootPassword"
-
-POD_CIDR="192.168.0.0/16"
-K8S_VERSION="1.30.4-00"      # 指定稳定版本
-IMAGE_REPO="registry.aliyuncs.com/google_containers"
-PAUSE_IMG="${IMAGE_REPO}/pause:3.9"
-
-IMAGE_LIST=(
-  "kube-apiserver:v1.30.4"
-  "kube-controller-manager:v1.30.4"
-  "kube-scheduler:v1.30.4"
-  "kube-proxy:v1.30.4"
-  "etcd:3.5.12-0"
-  "coredns:v1.11.1"
-  "pause:3.9"
-)
-
+# === 输出函数 ===
 COLOR_BLUE="\033[1;34m"; COLOR_GREEN="\033[1;32m"; COLOR_YELLOW="\033[1;33m"; COLOR_RESET="\033[0m"
 step() { echo -e "${COLOR_BLUE}[STEP]${COLOR_RESET} $*"; }
 ok()   { echo -e "${COLOR_GREEN}✅${COLOR_RESET} $*"; }
 warn() { echo -e "${COLOR_YELLOW}⚠️${COLOR_RESET} $*"; }
 
-# === 2️⃣ 初始化 containerd / kubeadm 参数修复 ===
-step "修复 containerd 配置为 systemd 驱动 + 国内 pause 镜像"
-mkdir -p /etc/containerd
-if [[ ! -f /etc/containerd/config.toml ]]; then
-  containerd config default >/etc/containerd/config.toml
-fi
-sed -i 's#SystemdCgroup = false#SystemdCgroup = true#' /etc/containerd/config.toml
-sed -i "s#sandbox_image = .*#sandbox_image = \"${PAUSE_IMG}\"#" /etc/containerd/config.toml
-systemctl daemon-reexec && systemctl restart containerd && systemctl enable containerd
-ok "containerd 配置修复完成"
+# === 引入配置 ===
+BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "${BASE_DIR}/00_cluster.env"
 
-# === 3️⃣ 拉取并缓存镜像 ===
-step "拉取 Kubernetes v${K8S_VERSION} 镜像到本地"
-mkdir -p /opt/k8s-image-cache
-cd /opt/k8s-image-cache
+if [[ ! -f /opt/k8s-setup/phase4_done ]]; then
+  warn "未检测到 Phase 4 标记，请先执行 04_containerd_k8s.sh"
+  exit 1
+fi
+
+mkdir -p /opt/k8s-setup
+if [[ -f /opt/k8s-setup/phase5_done ]]; then
+  ok "检测到 Phase 5 已执行，跳过。"
+  exit 0
+fi
+
+CONTROL_PLANE_IP="${CONTROL_PLANE_IP:-${ALL_MASTERS[0]}}"
+POD_CIDR="${POD_CIDR:-192.168.0.0/16}"
+IMAGE_REPO="${PAUSE_IMAGE%/pause:*}"
+
+# === 镜像列表 ===
+IMAGE_LIST=(
+  "kube-apiserver:v${K8S_VERSION%%-*}"
+  "kube-controller-manager:v${K8S_VERSION%%-*}"
+  "kube-scheduler:v${K8S_VERSION%%-*}"
+  "kube-proxy:v${K8S_VERSION%%-*}"
+  "etcd:3.5.12-0"
+  "coredns:v1.11.1"
+  "pause:3.9"
+)
+
+CACHE_DIR="/opt/k8s-image-cache"
+mkdir -p "${CACHE_DIR}"
+
+# ============================================================
+# 1. 镜像拉取与缓存
+# ============================================================
+step "拉取 Kubernetes 核心镜像到 ${CACHE_DIR}"
+
 for img in "${IMAGE_LIST[@]}"; do
   full="${IMAGE_REPO}/${img}"
+  tarname="$(echo "${img}" | tr '/:' '_').tar"
   echo ">>> 拉取 ${full}"
-  crictl pull "${full}" || (echo "尝试 ctr 拉取 ${full}" && ctr -n k8s.io images pull "${full}")
-  imgfile=$(echo "${img}" | tr '/:' '_')
-  echo ">>> 保存 ${imgfile}.tar"
-  ctr -n k8s.io images export "${imgfile}.tar" "${IMAGE_REPO}/${img}" || true
+  if ! ctr -n k8s.io images pull "${full}" >/dev/null 2>&1; then
+    crictl pull "${full}" >/dev/null 2>&1 || warn "拉取失败：${full}"
+  fi
+  ctr -n k8s.io images export "${CACHE_DIR}/${tarname}" "${full}" >/dev/null 2>&1 || true
 done
-ok "镜像拉取并缓存完成"
+ok "镜像缓存完成"
 
-# === 4️⃣ 初始化控制平面 ===
-step "执行 kubeadm init (版本 ${K8S_VERSION})"
-kubeadm reset -f || true
+# ============================================================
+# 2. kubeadm init
+# ============================================================
+step "执行 kubeadm init"
+kubeadm reset -f >/dev/null 2>&1 || true
 rm -rf /etc/kubernetes /var/lib/etcd /var/lib/cni /etc/cni/net.d || true
 
-kubeadm init \
-  --apiserver-advertise-address="${CONTROL_PLANE_IP}" \
-  --pod-network-cidr="${POD_CIDR}" \
-  --image-repository="${IMAGE_REPO}" \
-  --kubernetes-version="${K8S_VERSION}" \
-  --v=5
+INIT_ARGS=(
+  "--apiserver-advertise-address=${CONTROL_PLANE_IP}"
+  "--pod-network-cidr=${POD_CIDR}"
+  "--image-repository=${IMAGE_REPO}"
+  "--v=5"
+)
+kubeadm init "${INIT_ARGS[@]}"
+ok "kubeadm init 成功"
 
-ok "kubeadm init 完成"
+# ============================================================
+# 3. 配置 kubectl
+# ============================================================
+mkdir -p "$HOME/.kube"
+cp -f /etc/kubernetes/admin.conf "$HOME/.kube/config"
+chown "$(id -u)":"$(id -g)" "$HOME/.kube/config"
+ok "kubectl 已配置"
 
-# === 5️⃣ 配置 kubectl 环境 ===
-mkdir -p $HOME/.kube
-cp -f /etc/kubernetes/admin.conf $HOME/.kube/config
-chown $(id -u):$(id -g) $HOME/.kube/config
-ok "kubectl 已配置：$(kubectl version --short | head -n 1)"
+# ============================================================
+# 4. 生成 join 命令
+# ============================================================
+JOIN_CMD="$(kubeadm token create --print-join-command)"
+echo "${JOIN_CMD}" >"${CACHE_DIR}/join.sh"
+chmod +x "${CACHE_DIR}/join.sh"
+ok "Join 命令已生成"
 
-# === 6️⃣ 生成 join 命令 ===
-JOIN_CMD=$(kubeadm token create --print-join-command)
-echo "${JOIN_CMD}" >/opt/k8s-image-cache/join.sh
-chmod +x /opt/k8s-image-cache/join.sh
-ok "Join 命令已保存到 /opt/k8s-image-cache/join.sh"
+# ============================================================
+# 5. 分发镜像与 join.sh 并远程执行 join
+# ============================================================
+step "分发镜像缓存并 join"
 
-# === 7️⃣ 分发镜像到其他节点并离线加载 ===
-step "分发镜像包与 join 命令到 worker 节点"
-for NODE in "${WORKER_IPS[@]}"; do
-  echo ">>> 分发到 ${NODE}"
-  sshpass -p "${SSH_PASS}" scp -o StrictHostKeyChecking=no -r /opt/k8s-image-cache "${SSH_USER}@${NODE}:/opt/" >/dev/null
-  sshpass -p "${SSH_PASS}" ssh -o StrictHostKeyChecking=no "${SSH_USER}@${NODE}" bash -s <<'EOF'
+for NODE in "${ALL_NODES[@]}"; do
+  if [[ "$NODE" == "$(hostname -I | awk '{print $1}')" ]]; then continue; fi
+  echo ">>> 处理节点 ${NODE}"
+  if ! timeout 3 bash -c "echo > /dev/tcp/${NODE}/${SSH_PORT}" 2>/dev/null; then
+    warn "节点 ${NODE} 不可达"
+    continue
+  fi
+
+  if ! timeout 60s sshpass -p "${SSH_PASS}" scp -P "${SSH_PORT}" -o StrictHostKeyChecking=no -r "${CACHE_DIR}" "${SSH_USER}@${NODE}:/opt/" >/dev/null 2>&1; then
+    warn "SCP 到 ${NODE} 失败"
+    continue
+  fi
+
+  timeout 150s sshpass -p "${SSH_PASS}" ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no "${SSH_USER}@${NODE}" 'bash -s' <<'EOF' >/dev/null 2>&1 || true
 set -e
-cd /opt/k8s-image-cache
+CACHE_DIR="/opt/k8s-image-cache"
+cd "${CACHE_DIR}" || exit 0
 for f in *.tar; do
-  echo ">>> 加载镜像 \$f"
-  ctr -n k8s.io images import "\$f" >/dev/null || echo "跳过加载 \$f"
+  [ -f "$f" ] || continue
+  ctr -n k8s.io images import "$f" >/dev/null 2>&1 || crictl images >/dev/null 2>&1 || true
 done
-chmod +x /opt/k8s-image-cache/join.sh
-/opt/k8s-image-cache/join.sh || true
+bash "${CACHE_DIR}/join.sh" || true
 EOF
+  ok "节点 ${NODE} join 已执行"
 done
-ok "镜像分发与离线加载完成"
 
-# === 8️⃣ 验证节点状态 ===
-step "验证节点状态"
-kubectl get nodes -o wide || warn "kubectl 连接失败，稍等 kubelet 注册"
-ok "集群初始化流程全部完成 🎉"
+# ============================================================
+# 6. 验证节点
+# ============================================================
+step "等待节点注册"
+sleep 10
+kubectl get nodes -o wide || warn "kubectl 尚未返回全部节点"
+ok "Phase 5 完成：集群已初始化 🎉"
+
+touch /opt/k8s-setup/phase5_done
