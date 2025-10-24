@@ -63,6 +63,8 @@ ok "所需包已缓存（尽可能离线可用）"
 
 # ---------- 分发与远程安装 ----------
 step "将缓存目录分发到其他节点并执行本地优先安装"
+# ---------- 分发与远程安装 ----------
+step "将缓存目录分发到其他节点并执行本地优先安装"
 
 for NODE in "${ALL_NODES[@]}"; do
   bold ">>> 处理节点 ${NODE}"
@@ -73,22 +75,20 @@ for NODE in "${ALL_NODES[@]}"; do
     continue
   fi
 
-  # 🔹 新增：提前检查端口连通性
-  if ! timeout 3 bash -c "echo > /dev/tcp/${NODE}/${SSH_PORT}" 2>/dev/null; then
-    warn "节点 ${NODE} SSH 端口 ${SSH_PORT} 不可达（跳过）"
-    continue
+  # 先同步目录（60 秒超时 + 跳过机制）
+  if timeout 60s sshpass -p "${SSH_PASS}" scp -P "${SSH_PORT}" -o StrictHostKeyChecking=no -r "${PKG_CACHE_DIR}" "${SSH_USER}@${NODE}:${PKG_CACHE_DIR}" >/dev/null 2>&1; then
+      ok "✅ SCP 到 ${NODE} 成功"
+  else
+      warn "⚠️  SCP 到 ${NODE} 失败或超时（跳过该节点）"
+      continue
   fi
 
-  # 分发缓存目录
-  # 分发缓存目录并远程安装
-  if timeout 60s sshpass -p "${SSH_PASS}" ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no "${SSH_USER}@${NODE}" 'bash -s' <<'EOF' >/dev/null 2>&1; then
+  # 再执行远程安装逻辑
+  timeout 120s sshpass -p "${SSH_PASS}" ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no "${SSH_USER}@${NODE}" 'bash -s' <<'EOF' >/dev/null 2>&1 || warn "远程安装失败"
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 APT_FLAGS=(-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 PKG_CACHE_DIR="/opt/k8s-pkg-cache"
-mkdir -p "${PKG_CACHE_DIR}"
-chown -R root:root "${PKG_CACHE_DIR}" >/dev/null 2>&1 || true
-
 install_from_cache_or_apt() {
   local pattern="$1"
   local found=0
@@ -103,24 +103,13 @@ install_from_cache_or_apt() {
     apt-get install "${APT_FLAGS[@]}" "$pattern" >/dev/null 2>&1 || true
   fi
 }
-
-apt-get update -y >/dev/null 2>&1 || true
-apt-get install "${APT_FLAGS[@]}" ca-certificates curl gnupg lsb-release apt-transport-https >/dev/null 2>&1 || true
-
 for p in chrony containerd cri-tools kubelet kubeadm kubectl; do
   install_from_cache_or_apt "$p"
 done
-
-if ! command -v crictl >/dev/null 2>&1 && [[ -f "${PKG_CACHE_DIR}/crictl-"*"-linux-amd64.tar.gz" ]]; then
-  tar -zxvf "${PKG_CACHE_DIR}/crictl-"*"-linux-amd64.tar.gz" -C /usr/local/bin >/dev/null 2>&1
-fi
 EOF
-    ok "节点 ${NODE} 已完成本地优先安装"
-  else
-    warn "远程安装在节点 ${NODE} 失败或超时（跳过）"
-  fi
 
-
+  ok "节点 ${NODE} 已完成本地优先安装"
 done
 
 ok "✅ 所有节点缓存分发 + 本地优先安装流程完成"
+
