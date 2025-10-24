@@ -76,7 +76,7 @@ for NODE in "${ALL_NODES[@]}"; do
   fi
 
   # 先同步目录（60 秒超时 + 跳过机制）
-  if timeout 60s sshpass -p "${SSH_PASS}" scp -P "${SSH_PORT}" -o StrictHostKeyChecking=no  "${PKG_CACHE_DIR}/*" "${SSH_USER}@${NODE}:${PKG_CACHE_DIR}" >/dev/null 2>&1; then
+  if timeout 60s sshpass -p "${SSH_PASS}" scp -P "${SSH_PORT}" -o StrictHostKeyChecking=no -r "${PKG_CACHE_DIR}" "${SSH_USER}@${NODE}:/opt" >/dev/null 2>&1; then
       ok "✅ SCP 到 ${NODE} 成功"
   else
       warn "⚠️  SCP 到 ${NODE} 失败或超时（跳过该节点）"
