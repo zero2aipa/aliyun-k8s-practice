@@ -1,47 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-# 读入配置
 source "$(dirname "$0")/00_cluster.env"
 
-# --------- 美观输出工具 ----------
+# ---------- 美观输出 ----------
 bold()  { echo -e "\033[1m$*\033[0m"; }
 ok()    { echo -e "✅ $*"; }
 warn()  { echo -e "⚠️  $*"; }
 err()   { echo -e "❌ $*" >&2; }
 step()  { echo -e "\n\033[1;34m[STEP]\033[0m $*"; }
 
-
-
-step "配置 root 密码、允许 root 登录与密码登录"
-
-# 自动设置 root 密码
-echo "root:${ROOT_PASS}" | chpasswd
-ok "root 密码已更新"
-
-# 修改 SSH 配置
-SSHD_CONFIG="/etc/ssh/sshd_config"
-
-# 启用 root 登录与密码认证
-sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' "$SSHD_CONFIG"
-sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' "$SSHD_CONFIG"
-
-# 确保 PAM 允许登录
-if grep -q "^#\?UsePAM" "$SSHD_CONFIG"; then
-  sed -i 's/^#\?UsePAM.*/UsePAM yes/' "$SSHD_CONFIG"
-else
-  echo "UsePAM yes" >> "$SSHD_CONFIG"
-fi
-
-# 重启 SSH 服务
-systemctl restart ssh || systemctl restart sshd
-ok "SSH 登录策略已启用（root + 密码登录）"
-
-
-
 export DEBIAN_FRONTEND=noninteractive
 APT_FLAGS=(-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 
+# ---------- 基础准备 ----------
 step "更新 APT 索引并安装基础包（含 sshpass）"
 apt-get update -y >/dev/null
 apt-get install "${APT_FLAGS[@]}" locales language-pack-zh-hans tzdata sshpass curl ca-certificates gnupg lsb-release apt-transport-https >/dev/null
@@ -56,21 +27,84 @@ step "设置统一时区：${TIMEZONE}"
 timedatectl set-timezone "${TIMEZONE}"
 ok "当前时间：$(date)"
 
-
-
-
-step "生成 SSH key（如无）并提示互信（可选）"
+# ---------- SSH key ----------
+step "生成 SSH key（如无）"
 if [[ ! -f /root/.ssh/id_rsa ]]; then
   mkdir -p /root/.ssh
   ssh-keygen -t rsa -N "" -f /root/.ssh/id_rsa <<<y >/dev/null 2>&1
-  ok "已生成 /root/.ssh/id_rsa"
+  ok "已生成 SSH key"
 else
-  ok "已存在 SSH key，跳过生成"
+  ok "SSH key 已存在"
 fi
 
-step "（可选）将公钥分发到各节点（免密）"
-for NODE in "${ALL_NODES[@]}"; do
-  if [[ "$NODE" == "$(hostname -I | awk '{print $1}')" ]]; then continue; fi
-  sshpass -p "${SSH_PASS}" ssh-copy-id -o StrictHostKeyChecking=no -p "${SSH_PORT}" "${SSH_USER}@${NODE}" >/dev/null 2>&1 || warn "ssh-copy-id ${NODE} 失败，稍后可重试"
+# ---------- 主机名与角色 ----------
+step "识别节点角色并设置主机名"
+
+MYIP=$(hostname -I | awk '{print $1}')
+ROLE="node"
+INDEX=1
+
+# 判断是否为 master
+for i in "${!ALL_MASTERS[@]}"; do
+  if [[ "${ALL_MASTERS[$i]}" == "$MYIP" ]]; then
+    ROLE="master"
+    INDEX=$((i+1))
+    break
+  fi
 done
-ok "互信分发流程完成（失败项可手动重试）"
+
+# 如果不在 master 列表中，则判断是否属于 node
+if [[ "$ROLE" == "node" ]]; then
+  for i in "${!ALL_NODES[@]}"; do
+    if [[ "${ALL_NODES[$i]}" == "$MYIP" ]]; then
+      INDEX=$((i+1))
+      break
+    fi
+  done
+fi
+
+NEW_HOSTNAME="${HOST_PREFIX}-${ROLE}-${INDEX}"
+hostnamectl set-hostname "${NEW_HOSTNAME}"
+ok "主机名已设置为：${NEW_HOSTNAME}（角色：${ROLE}）"
+
+# ---------- /etc/hosts 更新 ----------
+step "生成统一 /etc/hosts 文件"
+
+{
+  echo "127.0.0.1 localhost"
+  for ((i=0; i<${#ALL_MASTERS[@]}; i++)); do
+    echo "${ALL_MASTERS[$i]} ${HOST_PREFIX}-master-$((i+1))"
+  done
+  for ((i=0; i<${#ALL_NODES[@]}; i++)); do
+    echo "${ALL_NODES[$i]} ${HOST_PREFIX}-node-$((i+1))"
+  done
+} > /etc/hosts
+
+ok "本地 /etc/hosts 生成完成："
+grep -E "${HOST_PREFIX}-" /etc/hosts | awk '{print "   "$0}'
+
+# ---------- 分发 /etc/hosts ----------
+ALL_CLUSTER_IPS=("${ALL_MASTERS[@]}" "${ALL_NODES[@]}")
+step "分发 /etc/hosts 文件到所有节点"
+
+for NODE in "${ALL_CLUSTER_IPS[@]}"; do
+  if [[ "$NODE" == "$MYIP" ]]; then continue; fi
+  if timeout 10s sshpass -p "${SSH_PASS}" scp -P "${SSH_PORT}" -o StrictHostKeyChecking=no /etc/hosts "${SSH_USER}@${NODE}:/etc/hosts" >/dev/null 2>&1; then
+    ok "同步 /etc/hosts 至 ${NODE}"
+  else
+    warn "同步 /etc/hosts 至 ${NODE} 失败（跳过）"
+  fi
+done
+ok "全部节点 /etc/hosts 分发完成"
+
+# ---------- 分发 SSH key ----------
+step "分发公钥免密登录"
+for NODE in "${ALL_CLUSTER_IPS[@]}"; do
+  if [[ "$NODE" == "$MYIP" ]]; then continue; fi
+  if timeout 10s sshpass -p "${SSH_PASS}" ssh-copy-id -o StrictHostKeyChecking=no -p "${SSH_PORT}" "${SSH_USER}@${NODE}" >/dev/null 2>&1; then
+    ok "ssh-copy-id ${NODE} 成功"
+  else
+    warn "ssh-copy-id ${NODE} 失败（跳过）"
+  fi
+done
+ok "SSH 互信配置完成"
