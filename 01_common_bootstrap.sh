@@ -11,6 +11,34 @@ warn()  { echo -e "⚠️  $*"; }
 err()   { echo -e "❌ $*" >&2; }
 step()  { echo -e "\n\033[1;34m[STEP]\033[0m $*"; }
 
+
+
+step "配置 root 密码、允许 root 登录与密码登录"
+
+# 自动设置 root 密码
+echo "root:${ROOT_PASS}" | chpasswd
+ok "root 密码已更新"
+
+# 修改 SSH 配置
+SSHD_CONFIG="/etc/ssh/sshd_config"
+
+# 启用 root 登录与密码认证
+sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' "$SSHD_CONFIG"
+sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' "$SSHD_CONFIG"
+
+# 确保 PAM 允许登录
+if grep -q "^#\?UsePAM" "$SSHD_CONFIG"; then
+  sed -i 's/^#\?UsePAM.*/UsePAM yes/' "$SSHD_CONFIG"
+else
+  echo "UsePAM yes" >> "$SSHD_CONFIG"
+fi
+
+# 重启 SSH 服务
+systemctl restart ssh || systemctl restart sshd
+ok "SSH 登录策略已启用（root + 密码登录）"
+
+
+
 export DEBIAN_FRONTEND=noninteractive
 APT_FLAGS=(-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 
@@ -27,6 +55,9 @@ ok "语言已设置：$(locale | grep -E 'LANG=|LC_ALL=')"
 step "设置统一时区：${TIMEZONE}"
 timedatectl set-timezone "${TIMEZONE}"
 ok "当前时间：$(date)"
+
+
+
 
 step "生成 SSH key（如无）并提示互信（可选）"
 if [[ ! -f /root/.ssh/id_rsa ]]; then
