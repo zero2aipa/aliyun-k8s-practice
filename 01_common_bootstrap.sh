@@ -12,6 +12,53 @@ step()  { echo -e "\n\033[1;34m[STEP]\033[0m $*"; }
 export DEBIAN_FRONTEND=noninteractive
 APT_FLAGS=(-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 
+
+# ---------- SSH 登录与 root 密码 ----------
+step "开启 SSH 密码登录并允许 root 登录"
+
+SSHD_CFG="/etc/ssh/sshd_config"
+ROOT_PASS="${ROOT_PASS:-K8s@1234}"
+
+# 自动设置 root 密码（幂等）
+echo "root:${ROOT_PASS}" | chpasswd
+ok "root 密码已重置为：${ROOT_PASS}"
+
+# 修改 sshd_config
+if grep -q '^#\?PermitRootLogin' "$SSHD_CFG"; then
+  sed -ri 's/^#?PermitRootLogin.*/PermitRootLogin yes/' "$SSHD_CFG"
+else
+  echo "PermitRootLogin yes" >> "$SSHD_CFG"
+fi
+
+if grep -q '^#\?PasswordAuthentication' "$SSHD_CFG"; then
+  sed -ri 's/^#?PasswordAuthentication.*/PasswordAuthentication yes/' "$SSHD_CFG"
+else
+  echo "PasswordAuthentication yes" >> "$SSHD_CFG"
+fi
+
+sed -ri 's/^#?ChallengeResponseAuthentication.*/ChallengeResponseAuthentication no/' "$SSHD_CFG"
+
+# 处理 cloud-init（防止云主机重置 SSH 登录）
+if [[ -f /etc/cloud/cloud.cfg ]]; then
+  sed -ri 's/^disable_root: .*/disable_root: 0/' /etc/cloud/cloud.cfg
+  sed -ri 's/^ssh_pwauth: .*/ssh_pwauth:   yes/' /etc/cloud/cloud.cfg
+  ok "已更新 cloud-init 配置，确保 root 密码登录持久化"
+fi
+
+# 重启 ssh 服务
+systemctl daemon-reexec >/dev/null 2>&1 || true
+systemctl daemon-reload >/dev/null 2>&1 || true
+systemctl restart sshd 2>/dev/null || systemctl restart ssh || true
+
+# 验证 SSH 端口
+if ss -tlnp | grep -q ':22'; then
+  ok "SSH 服务已启动并监听 22 端口"
+else
+  warn "SSH 服务未监听 22 端口，请手动检查 sshd 状态"
+fi
+
+
+
 # ---------- 基础准备 ----------
 step "更新 APT 索引并安装基础包（含 sshpass）"
 apt-get update -y >/dev/null
