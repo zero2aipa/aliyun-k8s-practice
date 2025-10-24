@@ -41,16 +41,20 @@ use_aliyun_source() {
 use_official_source() {
   step "切换到官方 pkgs.k8s.io 源"
   mkdir -p /etc/apt/keyrings
+
+  # 选择对应版本
   OFFICIAL_KEY_URL="https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key"
   OFFICIAL_REPO="deb [signed-by=/etc/apt/keyrings/kubernetes-archive-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /"
 
-  # 下载新密钥（覆盖不询问）
-  curl -fsSL "${OFFICIAL_KEY_URL}" | gpg --dearmor -o /etc/apt/keyrings/kubernetes-archive-keyring.gpg >/dev/null 2>&1
+  # 强制覆盖旧 keyring，不再交互
+  curl -fsSL "${OFFICIAL_KEY_URL}" | gpg --dearmor --yes -o /etc/apt/keyrings/kubernetes-archive-keyring.gpg
 
   # 写入源
   echo "${OFFICIAL_REPO}" > /etc/apt/sources.list.d/kubernetes.list
 
+  # 更新索引
   apt-get update -y >/dev/null || warn "官方源更新失败"
+  ok "✅ 已切换至官方源并刷新索引"
 }
 
 
