@@ -73,7 +73,13 @@ for NODE in "${ALL_NODES[@]}"; do
     continue
   fi
 
-  # (1) 分发缓存目录（带超时与错误跳过）
+  # 🔹 新增：提前检查端口连通性
+  if ! timeout 3 bash -c "echo > /dev/tcp/${NODE}/${SSH_PORT}" 2>/dev/null; then
+    warn "节点 ${NODE} SSH 端口 ${SSH_PORT} 不可达（跳过）"
+    continue
+  fi
+
+  # 分发缓存目录
   if timeout 20s sshpass -p "${SSH_PASS}" scp -P "${SSH_PORT}" -o StrictHostKeyChecking=no -r "${PKG_CACHE_DIR}/" "${SSH_USER}@${NODE}:${PKG_CACHE_DIR}/" >/dev/null 2>&1; then
     ok "SCP 到 ${NODE} 成功"
   else
@@ -82,12 +88,13 @@ for NODE in "${ALL_NODES[@]}"; do
   fi
 
   # (2) 远程安装（超时 + 错误保护）
-  if timeout 120s sshpass -p "${SSH_PASS}" ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no "${SSH_USER}@${NODE}" "bash -s" <<"EOF" >/dev/null 2>&1; then
+  if timeout 10s sshpass -p "${SSH_PASS}" ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no "${SSH_USER}@${NODE}" "bash -s" <<"EOF" >/dev/null 2>&1; then
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 APT_FLAGS=(-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 PKG_CACHE_DIR="/opt/k8s-pkg-cache"
 mkdir -p "${PKG_CACHE_DIR}"
+chown -R root:root "${PKG_CACHE_DIR}" >/dev/null 2>&1 || true
 
 install_from_cache_or_apt() {
   local pattern="$1"
