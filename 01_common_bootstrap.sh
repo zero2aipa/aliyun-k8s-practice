@@ -98,13 +98,36 @@ done
 ok "全部节点 /etc/hosts 分发完成"
 
 # ---------- 分发 SSH key ----------
-step "分发公钥免密登录"
+step "分发公钥免密登录（安全跳过失败节点）"
+
+PUBKEY_PATH="/root/.ssh/id_rsa.pub"
 for NODE in "${ALL_CLUSTER_IPS[@]}"; do
   if [[ "$NODE" == "$MYIP" ]]; then continue; fi
-  if timeout 10s sshpass -p "${SSH_PASS}" ssh-copy-id -o StrictHostKeyChecking=no -p "${SSH_PORT}" "${SSH_USER}@${NODE}" >/dev/null 2>&1; then
-    ok "ssh-copy-id ${NODE} 成功"
+  echo "👉 正在处理节点 ${NODE} ..."
+  
+  # 测试连通性（3 秒超时）
+  if ! timeout 3s bash -c "echo > /dev/tcp/${NODE}/${SSH_PORT}" 2>/dev/null; then
+    warn "节点 ${NODE} SSH 端口不可达（跳过）"
+    continue
+  fi
+
+  # 确保目标节点 .ssh 存在
+  if timeout 8s sshpass -p "${SSH_PASS}" ssh -o StrictHostKeyChecking=no -p "${SSH_PORT}" "${SSH_USER}@${NODE}" "mkdir -p ~/.ssh && chmod 700 ~/.ssh" >/dev/null 2>&1; then
+    :
   else
-    warn "ssh-copy-id ${NODE} 失败（跳过）"
+    warn "节点 ${NODE} SSH 建立目录失败（跳过）"
+    continue
+  fi
+
+  # 直接拷贝公钥内容（替代 ssh-copy-id）
+  if timeout 10s sshpass -p "${SSH_PASS}" scp -P "${SSH_PORT}" -o StrictHostKeyChecking=no "${PUBKEY_PATH}" "${SSH_USER}@${NODE}:/tmp/id_rsa.pub.$$" >/dev/null 2>&1; then
+    timeout 8s sshpass -p "${SSH_PASS}" ssh -o StrictHostKeyChecking=no -p "${SSH_PORT}" "${SSH_USER}@${NODE}" \
+      "cat /tmp/id_rsa.pub.$$ >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && rm -f /tmp/id_rsa.pub.$$" >/dev/null 2>&1 \
+      && ok "免密已配置：${NODE}" \
+      || warn "节点 ${NODE} 更新 authorized_keys 失败"
+  else
+    warn "SCP 公钥到 ${NODE} 失败（跳过）"
   fi
 done
-ok "SSH 互信配置完成"
+ok "SSH 互信配置流程完成"
+
