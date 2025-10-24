@@ -88,44 +88,45 @@ for NODE in "${ALL_NODES[@]}"; do
   fi
 
   # (2) 远程安装（超时 + 错误保护）
-  if timeout 10s sshpass -p "${SSH_PASS}" ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no "${SSH_USER}@${NODE}" "bash -s" <<"EOF" >/dev/null 2>&1; then
-set -euo pipefail
-export DEBIAN_FRONTEND=noninteractive
-APT_FLAGS=(-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
-PKG_CACHE_DIR="/opt/k8s-pkg-cache"
-mkdir -p "${PKG_CACHE_DIR}"
-chown -R root:root "${PKG_CACHE_DIR}" >/dev/null 2>&1 || true
+  if timeout 60s sshpass -p "${SSH_PASS}" ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no "${SSH_USER}@${NODE}" 'bash -s' <<'EOF' >/dev/null 2>&1; then
+  set -euo pipefail
+  export DEBIAN_FRONTEND=noninteractive
+  APT_FLAGS=(-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+  PKG_CACHE_DIR="/opt/k8s-pkg-cache"
+  mkdir -p "${PKG_CACHE_DIR}"
+  chown -R root:root "${PKG_CACHE_DIR}" >/dev/null 2>&1 || true
 
-install_from_cache_or_apt() {
-  local pattern="$1"
-  local found=0
-  for f in "${PKG_CACHE_DIR}"/${pattern}*.deb; do
-    if [[ -f "$f" ]]; then
-      dpkg -i "$f" >/dev/null 2>&1 || apt-get install -f -y >/dev/null 2>&1
-      found=1
+  install_from_cache_or_apt() {
+    local pattern="$1"
+    local found=0
+    for f in "${PKG_CACHE_DIR}"/${pattern}*.deb; do
+      if [[ -f "$f" ]]; then
+        dpkg -i "$f" >/dev/null 2>&1 || apt-get install -f -y >/dev/null 2>&1
+        found=1
+      fi
+    done
+    if [[ "$found" -eq 0 ]]; then
+      apt-get update -y >/dev/null 2>&1 || true
+      apt-get install "${APT_FLAGS[@]}" "$pattern" >/dev/null 2>&1 || true
     fi
+  }
+
+  apt-get update -y >/dev/null 2>&1 || true
+  apt-get install "${APT_FLAGS[@]}" ca-certificates curl gnupg lsb-release apt-transport-https >/dev/null 2>&1 || true
+
+  for p in chrony containerd cri-tools kubelet kubeadm kubectl; do
+    install_from_cache_or_apt "$p"
   done
-  if [[ "$found" -eq 0 ]]; then
-    apt-get update -y >/dev/null 2>&1 || true
-    apt-get install "${APT_FLAGS[@]}" "$pattern" >/dev/null 2>&1 || true
+
+  if ! command -v crictl >/dev/null 2>&1 && [[ -f "${PKG_CACHE_DIR}/crictl-"*"-linux-amd64.tar.gz" ]]; then
+    tar -zxvf "${PKG_CACHE_DIR}/crictl-"*"-linux-amd64.tar.gz" -C /usr/local/bin >/dev/null 2>&1
   fi
-}
+  EOF
+      ok "节点 ${NODE} 已完成本地优先安装"
+    else
+      warn "远程安装在节点 ${NODE} 失败或超时（跳过）"
+    fi
 
-apt-get update -y >/dev/null 2>&1 || true
-apt-get install "${APT_FLAGS[@]}" ca-certificates curl gnupg lsb-release apt-transport-https >/dev/null 2>&1 || true
-
-for p in chrony containerd cri-tools kubelet kubeadm kubectl; do
-  install_from_cache_or_apt "$p"
-done
-
-if ! command -v crictl >/dev/null 2>&1 && [[ -f "${PKG_CACHE_DIR}/crictl-"*"-linux-amd64.tar.gz" ]]; then
-  tar -zxvf "${PKG_CACHE_DIR}/crictl-"*"-linux-amd64.tar.gz" -C /usr/local/bin >/dev/null 2>&1
-fi
-EOF
-    ok "节点 ${NODE} 已完成本地优先安装"
-  else
-    warn "远程安装在节点 ${NODE} 失败或超时（跳过）"
-  fi
 done
 
 ok "✅ 所有节点缓存分发 + 本地优先安装流程完成"
