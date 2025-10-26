@@ -102,8 +102,8 @@ done
 
 # 如果不在 master 列表中，则判断是否属于 node
 if [[ "$ROLE" == "node" ]]; then
-  for i in "${!ALL_NODES[@]}"; do
-    if [[ "${ALL_NODES[$i]}" == "$MYIP" ]]; then
+  for i in "${!ALL_WORKERS[@]}"; do
+    if [[ "${ALL_WORKERS[$i]}" == "$MYIP" ]]; then
       INDEX=$((i+1))
       break
     fi
@@ -122,8 +122,8 @@ step "生成统一 /etc/hosts 文件"
   for ((i=0; i<${#ALL_MASTERS[@]}; i++)); do
     echo "${ALL_MASTERS[$i]} ${HOST_PREFIX}-master-$((i+1))"
   done
-  for ((i=0; i<${#ALL_NODES[@]}; i++)); do
-    echo "${ALL_NODES[$i]} ${HOST_PREFIX}-node-$((i+1))"
+  for ((i=0; i<${#ALL_WORKERS[@]}; i++)); do
+    echo "${ALL_WORKERS[$i]} ${HOST_PREFIX}-node-$((i+1))"
   done
 } > /etc/hosts
 
@@ -131,7 +131,7 @@ ok "本地 /etc/hosts 生成完成："
 grep -E "${HOST_PREFIX}-" /etc/hosts | awk '{print "   "$0}'
 
 # ---------- 分发 /etc/hosts ----------
-ALL_CLUSTER_IPS=("${ALL_MASTERS[@]}" "${ALL_NODES[@]}")
+ALL_CLUSTER_IPS=("${ALL_MASTERS[@]}" "${ALL_WORKERS[@]}")
 step "分发 /etc/hosts 文件到所有节点"
 
 for NODE in "${ALL_CLUSTER_IPS[@]}"; do

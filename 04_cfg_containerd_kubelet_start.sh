@@ -78,6 +78,9 @@ step "分发 containerd + kubelet 配置到其他节点"
 
 for NODE in "${ALL_NODES[@]}"; do
   if [[ "$NODE" == "$(hostname -I | awk '{print $1}')" ]]; then
+    "systemctl daemon-reexec && systemctl enable --now containerd kubelet >/dev/null 2>&1 || true"
+
+  ok "节点 ${NODE} 服务启动完成"
     continue
   fi
 
@@ -96,6 +99,31 @@ for NODE in "${ALL_NODES[@]}"; do
     "systemctl daemon-reexec && systemctl enable --now containerd kubelet >/dev/null 2>&1 || true"
   ok "节点 ${NODE} 配置同步完成"
 done
+
+# ==========================================================
+# 3️⃣ 验证所有节点关键服务状态
+# ==========================================================
+step "验证所有节点 containerd / kubelet 服务状态"
+
+for NODE in "${ALL_NODES[@]}"; do
+  echo -e "\n>>> 验证节点 ${NODE} 服务状态"
+  LOCAL_IP=$(hostname -I | awk '{print $1}')
+
+  if [[ "$NODE" == "$LOCAL_IP" ]]; then
+    echo "(本机执行)"
+    systemctl is-active --quiet containerd && echo "✅ containerd 运行中" || echo "❌ containerd 未运行"
+    systemctl is-active --quiet kubelet && echo "✅ kubelet 运行中" || echo "❌ kubelet 未运行"
+  else
+    sshpass -p "${SSH_PASS}" ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no "${SSH_USER}@${NODE}" bash -s <<'EOF'
+systemctl is-active --quiet containerd && echo "✅ containerd 运行中" || echo "❌ containerd 未运行"
+systemctl is-active --quiet kubelet && echo "✅ kubelet 运行中" || echo "❌ kubelet 未运行"
+EOF
+  fi
+done
+
+ok "✅ 所有节点服务状态验证完成"
+
+
 
 # ============================================================
 # 4. 打标记
