@@ -98,7 +98,7 @@ ok "Join 命令已生成"
 # ============================================================
 step "分发镜像缓存并 join"
 
-for NODE in "${ALL_NODES[@]}"; do
+for NODE in "${ALL_WORKERS[@]}"; do
   if [[ "$NODE" == "$(hostname -I | awk '{print $1}')" ]]; then continue; fi
   echo ">>> 处理节点 ${NODE}"
   if ! timeout 3 bash -c "echo > /dev/tcp/${NODE}/${SSH_PORT}" 2>/dev/null; then

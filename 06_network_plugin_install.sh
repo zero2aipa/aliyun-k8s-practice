@@ -28,7 +28,7 @@ CONTROL_PLANE_IP="${CONTROL_PLANE_IP:-${ALL_MASTERS[0]}}"
 WORKER_IPS=()
 declare -A _is_master=()
 for ip in "${ALL_MASTERS[@]}"; do _is_master["$ip"]=1; done
-for ip in "${ALL_NODES[@]}"; do [[ -z "${_is_master[$ip]:-}" ]] && WORKER_IPS+=("$ip"); done
+for ip in "${ALL_WORKERS[@]}"; do [[ -z "${_is_master[$ip]:-}" ]] && WORKER_IPS+=("$ip"); done
 
 # ============================================================
 # 1️⃣ 检查集群状态

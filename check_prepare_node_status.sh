@@ -7,10 +7,7 @@ set -euo pipefail
 # ============================================================
 
 # ======== 集群节点信息（请按需修改）========
-CONTROL_PLANE_IP="10.0.1.1"
-WORKER_IPS=("10.0.2.11" "10.0.2.12")
-ALL_NODES=("$CONTROL_PLANE_IP" "${WORKER_IPS[@]}")
-SSH_USER="root"
+source "/tmp/00_cluster.env"
 
 # ======== 彩色输出 =========
 GREEN="\033[1;32m"
@@ -113,4 +110,4 @@ for NODE in "${ALL_NODES[@]}"; do
   check_node "$NODE"
 done
 
-echo -e "\n${GREEN}🎯 检查完成。若任一节点出现 ❌，请重新执行 03_prepare_node.sh${RESET}"
+echo -e "\n${GREEN}🎯 检查完成。若任一节点出现 ❌，请重新执行..."
