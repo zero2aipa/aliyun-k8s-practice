@@ -4,6 +4,7 @@ set -euo pipefail
 # ========== 可配置变量 ==========
 K8S_VERSION="1.30.4-1.1"           # 目标 Kubernetes 版本
 #K8S_VERSION="1.30.14-1.1"           # 目标 Kubernetes 版本
+
 PKG_DIR="/opt/k8s-pkg-cache"        # 离线包保存路径
 KEYRING="/etc/apt/keyrings/kubernetes-apt-keyring.gpg"
 SOURCE_LIST="/etc/apt/sources.list.d/kubernetes.list"
