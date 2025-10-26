@@ -134,29 +134,41 @@ for NODE in "${ALL_NODES[@]}"; do
   fi
 
   # 远程执行安装逻辑
-  timeout 120s sshpass -p "${SSH_PASS}" ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no "${SSH_USER}@${NODE}" 'bash -s' <<'EOF' >/dev/null 2>&1 || warn "远程安装失败"
+  # 远程执行安装逻辑
+  timeout 180s sshpass -p "${SSH_PASS}" ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no "${SSH_USER}@${NODE}" bash -s <<EOF || warn "远程安装失败"
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 APT_FLAGS=(-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 PKG_CACHE_DIR="/opt/k8s-pkg-cache"
+
 install_from_cache_or_apt() {
   local pattern="$1"
   local found=0
   for f in "${PKG_CACHE_DIR}"/${pattern}*.deb; do
     if [[ -f "$f" ]]; then
-      dpkg -i "$f" >/dev/null 2>&1 || apt-get install -f -y >/dev/null 2>&1
+      echo "📦 本地安装: $f"
+      dpkg -i "$f" || apt-get install -f -y
       found=1
     fi
   done
   if [[ "$found" -eq 0 ]]; then
-    apt-get update -y >/dev/null 2>&1 || true
-    apt-get install "${APT_FLAGS[@]}" "$pattern" >/dev/null 2>&1 || true
+    echo "🌐 网络安装: $pattern"
+    apt-get update -y || true
+    apt-get install "\$pattern" -y || true
   fi
 }
+
 for p in chrony containerd cri-tools kubelet kubeadm kubectl; do
-  install_from_cache_or_apt "$p"
+  install_from_cache_or_apt "\$p"
 done
+
+echo "✅ 节点安装完成: \$(hostname)"
+echo "    节点安装dpkg -l情况如下："
+dpkg -l | grep -E "chrony|containerd|cri-tools|kubelet|kubeadm|kubectl"
+
+
 EOF
+
 
   ok "节点 ${NODE} 已完成本地优先安装"
 done
