@@ -16,10 +16,10 @@ warn() { echo -e "${COLOR_YELLOW}⚠️${COLOR_RESET} $*"; }
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${BASE_DIR}/00_cluster.env"
 
-if [[ ! -f /opt/k8s-setup/phase4_done ]]; then
-  warn "未检测到 Phase 4 标记，请先执行 04_containerd_k8s.sh"
-  exit 1
-fi
+# if [[ ! -f /opt/k8s-setup/phase4_done ]]; then
+#   warn "未检测到 Phase 4 标记，请先执行 04_containerd_k8s.sh"
+#   exit 1
+# fi
 
 mkdir -p /opt/k8s-setup
 if [[ -f /opt/k8s-setup/phase5_done ]]; then

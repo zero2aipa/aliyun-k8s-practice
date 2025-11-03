@@ -25,6 +25,7 @@ mkdir -p "${PKG_DIR}" /etc/apt/keyrings
 # ============================================================
 # 0️⃣ 清理旧 Kubernetes APT 源，防止重复警告
 # ============================================================
+[ -f /etc/apt/sources.list.backup ] || cp /etc/apt/sources.list /etc/apt/sources.list.backup
 if grep -q "pkgs.k8s.io" /etc/apt/sources.list 2>/dev/null; then
   info "检测到旧的 Kubernetes APT 源，正在清理..."
   sed -i '/pkgs.k8s.io/d' /etc/apt/sources.list

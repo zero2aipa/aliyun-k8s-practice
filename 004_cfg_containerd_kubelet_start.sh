@@ -27,18 +27,18 @@ fi
 # ============================================================
 # 1. 安装 containerd
 # ============================================================
-step "安装 containerd（跳过 kubelet/kubeadm/kubectl，已在 02 阶段完成）"
+# step "安装 containerd（跳过 kubelet/kubeadm/kubectl，已在 02 阶段完成）"
 
-PKG_CACHE_DIR="/opt/k8s-pkg-cache"
-APT_FLAGS=(-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
-apt-get update -y >/dev/null 2>&1 || true
+# PKG_CACHE_DIR="/opt/k8s-pkg-cache"
+# APT_FLAGS=(-y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
+# apt-get update -y >/dev/null 2>&1 || true
 
-if [[ -f "${PKG_CACHE_DIR}/containerd_1.7.28-0ubuntu1~22.04.1_amd64.deb" ]]; then
-  dpkg -i "${PKG_CACHE_DIR}/containerd_"*.deb >/dev/null 2>&1 || apt-get install -f -y >/dev/null 2>&1
-else
-  apt-get install "${APT_FLAGS[@]}" containerd >/dev/null 2>&1 || warn "安装 containerd 失败"
-fi
-ok "containerd 安装完成"
+# if [[ -f "${PKG_CACHE_DIR}/containerd_1.7.28-0ubuntu1~22.04.1_amd64.deb" ]]; then
+#   dpkg -i "${PKG_CACHE_DIR}/containerd_"*.deb >/dev/null 2>&1 || apt-get install -f -y >/dev/null 2>&1
+# else
+#   apt-get install "${APT_FLAGS[@]}" containerd >/dev/null 2>&1 || warn "安装 containerd 失败"
+# fi
+# ok "containerd 安装完成"
 
 
 # ============================================================
@@ -91,11 +91,11 @@ for NODE in "${ALL_NODES[@]}"; do
   fi
 
   # 传输配置文件
-  sshpass -p "${SSH_PASS}" scp -P "${SSH_PORT}" -o StrictHostKeyChecking=no \
+  scp -P "${SSH_PORT}" -o StrictHostKeyChecking=no \
     /etc/containerd/config.toml "${SSH_USER}@${NODE}:/etc/containerd/" >/dev/null 2>&1 || warn "配置推送失败"
 
   # 远程启用服务
-  sshpass -p "${SSH_PASS}" ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no "${SSH_USER}@${NODE}" \
+  ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no "${SSH_USER}@${NODE}" \
     "systemctl daemon-reexec && systemctl enable --now containerd kubelet >/dev/null 2>&1 || true"
   ok "节点 ${NODE} 配置同步完成"
 done
@@ -114,7 +114,7 @@ for NODE in "${ALL_NODES[@]}"; do
     systemctl is-active --quiet containerd && echo "✅ containerd 运行中" || echo "❌ containerd 未运行"
     systemctl is-active --quiet kubelet && echo "✅ kubelet 运行中" || echo "❌ kubelet 未运行"
   else
-    sshpass -p "${SSH_PASS}" ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no "${SSH_USER}@${NODE}" bash -s <<'EOF'
+    ssh -p "${SSH_PORT}" -o StrictHostKeyChecking=no "${SSH_USER}@${NODE}" bash -s <<'EOF'
 systemctl is-active --quiet containerd && echo "✅ containerd 运行中" || echo "❌ containerd 未运行"
 systemctl is-active --quiet kubelet && echo "✅ kubelet 运行中" || echo "❌ kubelet 未运行"
 EOF
