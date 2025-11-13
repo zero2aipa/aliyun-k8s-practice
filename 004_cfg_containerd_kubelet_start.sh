@@ -78,7 +78,10 @@ step "分发 containerd + kubelet 配置到其他节点"
 
 for NODE in "${ALL_NODES[@]}"; do
   if [[ "$NODE" == "$(hostname -I | awk '{print $1}')" ]]; then
-    "systemctl daemon-reexec && systemctl enable --now containerd kubelet >/dev/null 2>&1 || true"
+    # "systemctl daemon-reexec && systemctl enable --now containerd kubelet >/dev/null 2>&1 || true"
+    systemctl daemon-reexec && systemctl enable --now containerd kubelet >/dev/null 2>&1 || true
+    mkdir /etc/containerd || true
+
 
   ok "节点 ${NODE} 服务启动完成"
     continue
