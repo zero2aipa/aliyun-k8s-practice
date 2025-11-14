@@ -117,7 +117,7 @@ for IMG in "${IMGS[@]}"; do
   TAG="${NAME_TAG##*:}"             # v3.27.2
 
   # Calico manifest 中原始字段: image: docker.io/calico/node:v3.27.2
-#   sed -i "s#docker.io/calico/${NAME}:${TAG}#localhost/${NAME}:${TAG}#g" "$CALICO_YAML"
+  #   sed -i "s#docker.io/calico/${NAME}:${TAG}#localhost/${NAME}:${TAG}#g" "$CALICO_YAML"
 done
 
 ok "calico.yaml 已生成：$CALICO_YAML"

@@ -132,4 +132,4 @@ ok "✅ 所有节点服务状态验证完成"
 # 4. 打标记
 # ============================================================
 touch /opt/k8s-setup/phase4_done
-ok "Phase 4 完成：containerd + kubelet 配置已同步"
+ok "Phase 5 完成：containerd + kubelet 配置已同步"

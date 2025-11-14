@@ -119,7 +119,15 @@ echo "✅ 本地离线包全部安装完成"
 EOSH
 chmod +x "${PKG_DIR}/install_all_local.sh"
 
+
 ok "install_all_local.sh 已生成"
+echo ""
+ls -lh "${PKG_DIR}" | grep -E 'deb|tar.gz' || true
+
+
+echo ""
+echo "📦 本地执行离线安装全部依赖"
+bash "${PKG_DIR}/install_all_local.sh"
 
 # ============================================================
 # 9️⃣ 总结输出
@@ -127,7 +135,9 @@ ok "install_all_local.sh 已生成"
 ok "所有离线包已下载到 ${PKG_DIR}"
 echo "➡ 可分发并在目标节点执行："
 echo "   scp -r ${PKG_DIR} root@<node>:/opt/"
-echo "   ssh root@<node> 'bash /opt/k8s-pkg-cache-full/install_all_local.sh'"
+echo "   ssh root@node1 'bash /opt/k8s-pkg-cache-full/install_all_local.sh'"
+echo "   ssh root@node2 'bash /opt/k8s-pkg-cache-full/install_all_local.sh'"
+
 echo ""
-ls -lh "${PKG_DIR}" | grep -E 'deb|tar.gz' || true
+
 

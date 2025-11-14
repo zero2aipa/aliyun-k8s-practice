@@ -1,4 +1,4 @@
-check_k8s_pkg_and_service.sh#!/usr/bin/env bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 # ========== 配置 ==========
